@@ -44,6 +44,34 @@ RECEIVED --> CONFIRMED --> DISPATCHED --> DELIVERED
 - `CANCELED` pode ser alcancado de qualquer estado nao-terminal
 - `DELIVERED` e `CANCELED` sao estados finais
 
+## Arquitetura e Decisões de Design
+
+O projeto segue uma arquitetura em camadas (Layered Architecture) para garantir desacoplamento e testabilidade. Abaixo estão as principais decisões de engenharia adotadas:
+
+### 1. Persistência e Concorrência (Thread-Safety)
+Como o desafio exigia persistência em arquivo JSON (que não possui controle transacional nativo), foi implementada uma estratégia robusta para evitar **Race Conditions**:
+- **Leitura**: Cache em memória (`ArrayList`) carregado na inicialização, garantindo performance de leitura O(1) ou O(n) sem I/O de disco constante.
+- **Escrita**: Utilização de bloqueios (`synchronized`) e Mutex para garantir que apenas uma thread escreva no arquivo por vez.
+- **Atomicidade**: A gravação física utiliza a estratégia de *Atomic File Move* (escreve em temp -> move para final), prevenindo corrupção de dados caso o sistema falhe durante a escrita.
+
+### 2. Máquina de Estados (State Machine)
+Para gerenciar as transições de status do pedido (`RECEIVED` -> `CONFIRMED` -> ...), evitei o uso de condicionais espalhadas (`if/else`):
+- **Implementação**: Classe dedicada `OrderStateMachine` utilizando `EnumMap` e `EnumSet`.
+- **Performance**: Validação de transições com complexidade O(1).
+- **Manutenibilidade**: As regras de transição estão centralizadas; alterar o fluxo do negócio não exige mudanças nos Services ou Controllers.
+
+### 3. Desacoplamento e Escalabilidade
+A camada de Serviço (`OrderService`) desconhece que os dados são salvos em um JSON.
+- **Benefício**: Isso permite migrar a persistência para um Banco de Dados Relacional (PostgreSQL, MySQL) ou NoSQL no futuro alterando apenas a implementação do Repositório, sem refatorar uma única linha da regra de negócio.
+
+### 4. Estratégia de Testes
+A qualidade foi assegurada através da Pirâmide de Testes:
+- **Unitários (Service & StateMachine)**: Validam a lógica de negócio e transições de status isoladamente (com Mockito).
+- **Integração (Controller)**: Validam o contrato da API, serialização JSON e Status Codes HTTP (com MockMvc).
+
+### 5. Frontend & Networking
+- **Next.js Rewrites**: Configurado como Reverse Proxy para evitar problemas de CORS e simplificar a comunicação entre o browser e o container do backend dentro da rede Docker.
+
 ## Como Rodar
 
 ### Com Docker (recomendado)
